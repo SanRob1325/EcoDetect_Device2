@@ -6,7 +6,7 @@ import os
 import time
 import requests 
 from dotenv import load_dotenv
-
+"""Water flow sensor"""
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
@@ -20,7 +20,7 @@ last_time = time.time()
 MAIN_PI_IP = os.getenv("MAIN_PI_IP")
 if not MAIN_PI_IP:
     raise ValueError("Main PI IP has not been configured correctly in .env file")
-
+"""Counts flow pulse"""
 def count_pulse(channel):
     global pulse_count
     pulse_count += 1
