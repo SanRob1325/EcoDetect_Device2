@@ -1,78 +1,42 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime
-import RPi.GPIO as GPIO
+import lgpio 
 import os
 import time
 import requests 
-from dotenv import load_dotenv
-"""Water flow sensor"""
-load_dotenv()
-app = Flask(__name__)
-CORS(app)
+import paho.mqtt.client as mqtt
+from datetime import datetime
 
 FLOW_SENSOR_PIN = 17
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(FLOW_SENSOR_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-
 pulse_count = 0
-last_time = time.time()
-MAIN_PI_IP = os.getenv("MAIN_PI_IP")
-if not MAIN_PI_IP:
-    raise ValueError("Main PI IP has not been configured correctly in .env file")
-"""Counts flow pulse"""
-def count_pulse(channel):
+calibration_factor = 7.5
+
+h = lgpio.gpiochip_open(0)
+lgpio.gpio_claim_input(h, FLOW_SENSOR_PIN)
+
+def flow_callback(chip, gpio, level, tick):
     global pulse_count
-    pulse_count += 1
+    if level == 0:
+        pulse_count += 1
 
-GPIO.add_event_detect(FLOW_SENSOR_PIN,GPIO.RISING, callback=count_pulse)
+lgpio.gpio_claim_alert(h, FLOW_SENSOR_PIN, lgpio.BOTH_EDGES)
+lgpio.callback(h, FLOW_SENSOR_PIN, lgpio.BOTH_EDGES, flow_callback)
 
-def calculate_flow_rate():
-    """
-    Calculate the water flow in liters per minute
-    """
-    global pulse_count, last_time
-    current_time = time.time()
-    elapsed_time = current_time - last_time
 
-    if elapsed_time <= 0:
-        return 0.0
-    
-    flow_rate = (pulse_count / 450.0) / (elapsed_time / 60.0)
-    pulse_count = 0
-    last_time = current_time
-    return round(flow_rate, 2)
+try:    
+    while True:
+        pulse_count_start = pulse_count
+        time.sleep(1)
+        pulse_count_end = pulse_count
 
-@app.route('/api/water-flow', methods=['GET'])
-def get_water_flow():
-    """Calculates and returns the current waterflow rate"""
-    try:
-        flow_rate = calculate_flow_rate()
-        return jsonify({"flow_rate": flow_rate, "timestamp": datetime.now().isoformat}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-@app.route('/api/send-water-flow', methods=['POST'])
-def send_water_flow():
-    """Calculates the flow rate and sends it to the main Raspberry Pi"""
-    try:
-        flow_rate = calculate_flow_rate()
+        pulses_per_second = pulse_count_end - pulse_count_start
+        flow_rate = pulses_per_second / calibration_factor
 
-        forward_url = f"http://{MAIN_PI_IP}:5000/api/water-flow"
-        payload = {"flow_rate": flow_rate, "timestamp": datetime.now().isoformat()}
-        response = requests.post(forward_url, json=payload)
+        print(f"Flow Rate: {flow_rate:.2f} L/min")
 
-        if response.status_code != 200:
-            return jsonify({"error": f"Failed to send data to main Pi.Response: {response.text}"}), response.status_code
-        
-        return jsonify({"message": "Water flow data sent successfully", "flow_rate": flow_rate }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+except KeyboardInterrupt:
+    print("\nExiting")
 
-if __name__ == "__main__":
-    try: 
-        app.run(host='0.0.0.0', port=5001)
-
-    except KeyboardInterrupt:
-        print("Exiting...")
-        GPIO.cleanup() 
+finally:
+    lgpio.gpiochip_close(h)        
