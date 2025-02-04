@@ -13,7 +13,6 @@ from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
 from dotenv import load_dotenv
 import os
 
-
 load_dotenv()
 
 IOT_ENDPOINT = os.getenv("IOT_ENDPOINT")
@@ -28,7 +27,16 @@ mqtt_client = AWSIoTMQTTClient(THING_NAME)
 mqtt_client.configureEndpoint(IOT_ENDPOINT, 8883)
 mqtt_client.configureCredentials(ROOT_CA_PATH, PRIVATE_KEY_PATH, CERTIFICATE_PATH)
 mqtt_client.configureAutoReconnectBackoffTime(1, 32, 20)
-mqtt_client.connect()
+mqtt_client.configureOfflinePublishQueueing(-1)
+mqtt_client.configureDrainingFrequency(2)
+mqtt_client.configureConnectDisconnectTimeout(10)
+
+try:
+    mqtt_client.connect()
+    print("Connected to AWS IoT Core")
+except Exception as e:
+    print(f"MQTT CONNECTION FAILED")
+
 
 FLOW_SENSOR_PIN = 17
 pulse_count = 0
@@ -45,6 +53,7 @@ def flow_callback(chip, gpio, level, tick):
 lgpio.gpio_claim_alert(h, FLOW_SENSOR_PIN, lgpio.BOTH_EDGES)
 lgpio.callback(h, FLOW_SENSOR_PIN, lgpio.BOTH_EDGES, flow_callback)
 
+flow_rate_values = []
 
 try:    
     while True:
@@ -55,19 +64,28 @@ try:
         pulses_per_second = pulse_count_end - pulse_count_start
         flow_rate = pulses_per_second / calibration_factor
 
+        flow_rate_values.append(flow_rate)
+        if len(flow_rate_values) > 5:
+            flow_rate_values.pop(0)
+        smoothed_flow_rate = sum(flow_rate_values) / len(flow_rate_values)
         timestamp = datetime.now(timezone.utc).isoformat()
 
         sensor_data = {
+            "device_id": THING_NAME,
             "timestamp": timestamp,
-            "flow_rate": round(flow_rate,2),
+            "flow_rate": round(smoothed_flow_rate,2),
             "unit": "L/min"
         }
-
-        mqtt_client.publish(IOT_TOPIC, json.dumps(sensor_data), 1)
-        print(f"Flow Rate: {flow_rate:.2f} L/min | Sent to IoT Core")
+        try:
+            mqtt_client.publish(IOT_TOPIC, json.dumps(sensor_data), 1)
+            print(f"Flow Rate: {flow_rate:.2f} L/min | Sent to IoT Core")
+        except Exception as e:
+            print(f"MQTT Publishing Error: {e}")
 
 except KeyboardInterrupt:
     print("\nExiting")
 
 finally:
+    print("Closing GPIO connection")
     lgpio.gpiochip_close(h)        
+    print("GPIO Connection successfully closed")
