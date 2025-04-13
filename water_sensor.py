@@ -73,7 +73,7 @@ try:
         sensor_data = {
             "device_id": THING_NAME,
             "timestamp": timestamp,
-            "flow_rate": round(smoothed_flow_rate,2),
+            "flow_rate": str(round(smoothed_flow_rate,2)),
             "unit": "L/min"
         }
         try:
